@@ -1,0 +1,31 @@
+name: Generate 3D contribution graph
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Generate contribution graph
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: yoshi389111/github-profile-3d-contrib@0.7.1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          username: MABAIStrategies
+
+      - name: Commit generated graph
+        uses: EndBug/add-and-commit@v9
+        with:
+          default_author: github_actions
+          message: "chore: update 3D contribution graph"
+          add: "profile-3d-contrib/*.svg"
