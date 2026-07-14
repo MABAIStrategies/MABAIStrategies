@@ -30,16 +30,12 @@
 
 ---
 
-## 📊 Telemetry & Metrics
-
----
-
-## 📊 Telemetry & Metrics
+## 📈 Telemetry & Metrics
 
 <p align="center">
   <img
     height="180"
-    src="https://github-readme-stats.vercel.app/api?username=MABAIStrategies&show_icons=true&theme=radical&hide_border=true&cache_seconds=21600"
+    src="https://github-stats-extended.vercel.app/api?username=MABAIStrategies&show_icons=true&theme=radical&hide_border=true&cache_seconds=21600"
     alt="GitHub Stats"
   />
   <img
@@ -51,7 +47,7 @@
 
 <p align="center">
   <img
-    src="https://github-profile-trophy.vercel.app/?username=MABAIStrategies&theme=radical&row=1&column=7&no-frame=true&no-bg=true"
+    src="./profile/trophy.svg"
     alt="GitHub Trophies"
   />
 </p>
@@ -66,9 +62,3 @@
     alt="3D Contribution Graph"
   />
 </p>
-
-## 🏙️ Contribution Cityscape
-
-<div align="center">
-  <img src="./profile-3d-contrib/profile-night-view.svg" alt="3D Contribution Graph" />
-</div>
