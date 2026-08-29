@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0b0b16" />
+  <meta name="description" content="Generate beautiful greeting card templates from a vibe. Describe a mood, get 4 variations, remix and save your favorites." />
+  <title>Vibe Cards — Greeting Card Generator</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💌</text></svg>" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- ===== Top bar ===== -->
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">💌</span>
+        <span class="brand-name">Vibe Cards</span>
+      </div>
+      <button id="settingsBtn" class="icon-btn" aria-label="Settings">⚙️</button>
+    </header>
+
+    <main class="screens">
+      <!-- ===== Generate screen ===== -->
+      <section id="screen-create" class="screen is-active" aria-label="Create">
+        <div class="create-hero">
+          <h1>Describe your <span>vibe</span></h1>
+          <p class="muted">e.g. “rainy cyberpunk lo-fi”, “soft botanical spring”, “gold art deco luxury”.</p>
+          <div class="vibe-row">
+            <input id="vibeInput" class="vibe-input" type="text" autocomplete="off"
+                   placeholder="rainy cyberpunk lo-fi…" />
+            <button id="diceBtn" class="icon-btn ghost" aria-label="Surprise me" title="Surprise me">🎲</button>
+          </div>
+
+          <div class="chips" id="vibeChips" aria-label="Quick vibes"></div>
+
+          <details class="refine">
+            <summary>Refine <span class="muted">occasion · theme · colors</span></summary>
+            <div class="refine-body">
+              <label class="field">
+                <span>Occasion</span>
+                <select id="occasionSelect"></select>
+              </label>
+              <label class="field">
+                <span>Theme</span>
+                <select id="themeSelect"></select>
+              </label>
+              <label class="field">
+                <span>Colors</span>
+                <select id="paletteSelect"></select>
+              </label>
+            </div>
+          </details>
+
+          <button id="generateBtn" class="primary-btn">✨ Generate 4 cards</button>
+        </div>
+
+        <div id="resultsMeta" class="results-meta" hidden></div>
+        <div id="results" class="card-grid" aria-live="polite"></div>
+        <div id="emptyCreate" class="empty">
+          <div class="empty-emoji">🎨</div>
+          <p>Your four variations will appear here.</p>
+        </div>
+      </section>
+
+      <!-- ===== Browse screen ===== -->
+      <section id="screen-browse" class="screen" aria-label="Browse">
+        <div class="browse-tabs" role="tablist">
+          <button class="browse-tab is-active" data-tab="occasions" role="tab">Occasions</button>
+          <button class="browse-tab" data-tab="themes" role="tab">Themes</button>
+          <button class="browse-tab" data-tab="colors" role="tab">Colors</button>
+        </div>
+        <div id="browseGrid" class="browse-grid"></div>
+      </section>
+
+      <!-- ===== Favorites screen ===== -->
+      <section id="screen-favorites" class="screen" aria-label="Favorites">
+        <div class="screen-head">
+          <h2>Saved favorites</h2>
+          <span id="favCount" class="pill">0</span>
+        </div>
+        <div id="favGrid" class="card-grid"></div>
+        <div id="emptyFav" class="empty">
+          <div class="empty-emoji">🤍</div>
+          <p>Tap the heart on any card to save it here.</p>
+        </div>
+      </section>
+    </main>
+
+    <!-- ===== Bottom nav ===== -->
+    <nav class="tabbar">
+      <button class="tab is-active" data-screen="create"><span>✨</span>Create</button>
+      <button class="tab" data-screen="browse"><span>🗂️</span>Browse</button>
+      <button class="tab" data-screen="favorites"><span>❤️</span>Saved</button>
+    </nav>
+  </div>
+
+  <!-- ===== Full-screen viewer ===== -->
+  <div id="viewer" class="viewer" hidden>
+    <button id="viewerClose" class="viewer-close" aria-label="Close">✕</button>
+    <div class="viewer-stage">
+      <img id="viewerImg" alt="Greeting card preview" />
+    </div>
+    <div class="viewer-actions">
+      <button id="viewerFav" class="viewer-btn ghost">🤍 Save</button>
+      <button id="viewerRemix" class="viewer-btn">🔀 Remix</button>
+      <button id="viewerDownload" class="viewer-btn primary">⬇ Download</button>
+    </div>
+  </div>
+
+  <!-- ===== Settings modal ===== -->
+  <div id="settingsModal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>Settings</h3>
+        <button id="settingsClose" class="icon-btn" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted small">By default cards are generated instantly on your device — no account, no network. Optionally connect your own AI image API for photoreal results.</p>
+        <label class="switch-row">
+          <span>Use AI image API</span>
+          <input type="checkbox" id="setUseAI" />
+        </label>
+        <div id="aiFields" class="ai-fields">
+          <label class="field"><span>Endpoint</span>
+            <input type="text" id="setEndpoint" placeholder="https://api.openai.com/v1/images/generations" /></label>
+          <label class="field"><span>Model</span>
+            <input type="text" id="setModel" placeholder="gpt-image-1" /></label>
+          <label class="field"><span>API key</span>
+            <input type="password" id="setApiKey" placeholder="sk-…" autocomplete="off" /></label>
+          <p class="muted small">Your key is stored only in this browser (localStorage) and sent only to the endpoint you specify.</p>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button id="settingsSave" class="primary-btn compact">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Toast ===== -->
+  <div id="toast" class="toast" hidden></div>
+
+  <!-- ===== Loading overlay ===== -->
+  <div id="loader" class="loader" hidden>
+    <div class="spinner"></div>
+    <p id="loaderText">Composing your cards…</p>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
