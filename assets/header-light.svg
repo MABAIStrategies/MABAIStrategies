@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="200" viewBox="0 0 900 200" role="img" aria-labelledby="t d">
+  <title id="t">Mark Bockrath | MAB AI Strategies</title>
+  <desc id="d">Founder of MAB AI Strategies. Systems Architect. Max-Out Builder.</desc>
+  <rect width="900" height="200" rx="16" fill="#ffffff"/>
+  <rect x="380" y="132" width="140" height="4" rx="2" fill="#1976D2"/>
+  <text x="450" y="88" text-anchor="middle" font-family="'Fira Code','SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="38" font-weight="700" fill="#0d1117">Mark Bockrath</text>
+  <text x="450" y="118" text-anchor="middle" font-family="'Fira Code','SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="18" font-weight="600" fill="#1976D2">MAB AI Strategies</text>
+  <text x="450" y="166" text-anchor="middle" font-family="'Fira Code','SFMono-Regular',Consolas,'Liberation Mono',monospace" font-size="16" fill="#57606a">Founder · Systems Architect · Max-Out Builder</text>
+</svg>

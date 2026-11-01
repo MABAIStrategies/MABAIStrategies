@@ -1,5 +1,9 @@
 <div align="center">
-  <img src="https://readme-typing-svg.herokuapp.com?font=Fira+Code&weight=600&size=24&pause=1000&color=2196F3&center=true&vCenter=true&width=500&lines=Founder+of+MAB+AI+Strategies;Systems+Architect;Max-Out+Builder" alt="Typing SVG" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/header-dark.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="./assets/header-light.svg" />
+    <img src="./assets/header-light.svg" alt="Mark Bockrath | MAB AI Strategies: Founder, Systems Architect, Max-Out Builder" width="900" />
+  </picture>
 </div>
 
 <br/>
@@ -57,8 +61,9 @@
 ## 🏙️ Contribution Cityscape
 
 <p align="center">
-  <img
-    src="./profile-3d-contrib/profile-night-view.svg"
-    alt="3D Contribution Graph"
-  />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./profile-3d-contrib/profile-night-view.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="./profile-3d-contrib/profile-green.svg" />
+    <img src="./profile-3d-contrib/profile-green.svg" alt="3D Contribution Graph" />
+  </picture>
 </p>
