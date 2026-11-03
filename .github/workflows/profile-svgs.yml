@@ -1,0 +1,49 @@
+name: Update profile SVGs
+
+# Regenerates the 3D contribution graph and the trophy card once a day,
+# then commits only if either set of SVGs actually changed.
+# Replaces profile-3d.yml and trophy.yml.
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: profile-svgs
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Regenerate and commit profile SVGs
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate 3D contribution graph
+        uses: yoshi389111/github-profile-3d-contrib@0.7.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          USERNAME: MABAIStrategies
+
+      - name: Generate trophy card
+        uses: soulteary/github-profile-trophy-action@v1.0.0
+        with:
+          options: 'username=MABAIStrategies&theme=radical&column=7&no-frame=true&no-bg=true'
+          path: profile/trophy.svg
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit only if the SVGs changed
+        run: |
+          git add -A profile-3d-contrib/ profile/trophy.svg
+          if git diff --cached --quiet; then
+            echo "No SVG changes; nothing to commit."
+            exit 0
+          fi
+          git diff --cached --stat
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: update profile SVGs (3D graph + trophies)"
+          git push
