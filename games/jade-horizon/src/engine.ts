@@ -148,6 +148,18 @@ function weightedPick(items: number[], w: number[], rng: Rng): number {
   return items[items.length - 1];
 }
 
+/** For each tile: how many pairs of the guaranteed order must go before it is free. */
+export function freeSteps(pos: Pos[], order: [number, number][]): number[] {
+  const topo = buildTopology(pos);
+  const gone = pos.map(() => false);
+  const step = pos.map(() => -1);
+  for (let j = 0; j <= order.length; j++) {
+    for (let i = 0; i < pos.length; i++) if (step[i] < 0 && !gone[i] && freeIn(i, topo, gone)) step[i] = j;
+    if (j < order.length) { gone[order[j][0]] = true; gone[order[j][1]] = true; }
+  }
+  return step;
+}
+
 export interface DealSpec {
   copies: 2 | 4;
   mist: number;      // fraction of tiles under mist
@@ -204,9 +216,14 @@ export function deal(pos: Pos[], spec: DealSpec, rng: Rng): Deal {
     tiles[b].face = fb; tiles[b].group = groupOf(fb);
   });
   const P = order.length;
-  // Bombs: pairs early in the guaranteed order, so the countdown is always beatable.
+  // Bombs: only on pairs that open up within a couple of moves, so a player who
+  // spots the fuse can always reach it — not just one who follows a hidden path.
   const bombMoves = Math.max(spec.bombMoves, 4);
-  const bombCandidates = shuffle(order.map((_, i) => i).filter(i => i + 1 <= bombMoves - 2 && i >= 1), rng);
+  const step = freeSteps(pos, order);
+  const depthOf = (i: number) => Math.max(step[order[i][0]], step[order[i][1]]);
+  // Shallowest pairs first; random among equally shallow ones.
+  const bombCandidates = shuffle(order.map((_, i) => i).filter(i => i >= 1 && i + 1 <= bombMoves - 2), rng)
+    .sort((x, y) => depthOf(x) - depthOf(y));
   for (let k = 0; k < Math.min(spec.bombs, bombCandidates.length); k++) {
     const [a, b] = order[bombCandidates[k]];
     tiles[a].bomb = bombMoves; tiles[b].bomb = bombMoves;
@@ -219,7 +236,7 @@ export function deal(pos: Pos[], spec: DealSpec, rng: Rng): Deal {
     tiles[a].gold = true; tiles[b].gold = true;
   }
   // Locks: a lock value never exceeds the matches made before that pair in the solution.
-  const lockCandidates = shuffle(order.map((_, i) => i).filter(i => i >= 3), rng);
+  const lockCandidates = shuffle(order.map((_, i) => i).filter(i => i >= 3 && !tiles[order[i][0]].bomb), rng);
   for (let k = 0; k < Math.min(spec.locks, lockCandidates.length); k++) {
     const i = lockCandidates[k];
     const tid = order[i][rng() < 0.5 ? 0 : 1];
@@ -297,7 +314,7 @@ function rankMoves(board: Board, moves: [number, number][]): [number, number][] 
   const score = ([a, b]: [number, number]) => {
     const ta = board.tiles[a], tb = board.tiles[b];
     let s = 0;
-    if (ta.bomb) s += 1000 - ta.bomb * 10;
+    if (ta.bomb || tb.bomb) s += 600 - Math.min(ta.bomb || 99, tb.bomb || 99) * 10 + (ta.bomb && tb.bomb ? 600 : 0);
     if (ta.gold) s += 200;
     // Prefer high layers and tiles that block many others.
     s += (ta.pos.z + tb.pos.z) * 12;

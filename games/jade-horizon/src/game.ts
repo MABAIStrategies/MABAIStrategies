@@ -16,8 +16,10 @@ export interface HudState {
   goldLeft: number; goldTotal: number; objective: 'clear' | 'gold'; nextBomb: number | null; comboWindow: number;
 }
 
+export type EndCause = 'cleared' | 'gold' | 'bomb' | 'clock' | 'stuck';
+
 export interface EndInfo {
-  won: boolean; reason: string; stars: number; score: number; time: number; result: GameResult;
+  won: boolean; reason: string; cause: EndCause; stars: number; score: number; time: number; result: GameResult;
   starReasons: [boolean, boolean, boolean];
 }
 
@@ -99,43 +101,105 @@ export class Game {
   }
 
   // ---------------- input ----------------
+  touchAssist = true;
+  private zoomed = false;
+
   private bindInput() {
     const canvas = this.stage.renderer.domElement;
-    let down: { x: number; y: number; t: number } | null = null;
+    let down: { x: number; y: number; t: number; type: string } | null = null;
     let lastHover = 0;
-    const ndc = (e: PointerEvent) => {
+    let pressTimer = 0;
+    let longPressed = false;
+    const pointers = new Set<number>();
+    const ndcAt = (x: number, y: number) => {
       const r = canvas.getBoundingClientRect();
-      return new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+      return new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
     };
-    const pd = (e: PointerEvent) => { down = { x: e.clientX, y: e.clientY, t: performance.now() }; };
+    const cancelPress = () => { clearTimeout(pressTimer); pressTimer = 0; };
+    const pd = (e: PointerEvent) => {
+      pointers.add(e.pointerId);
+      longPressed = false;
+      cancelPress();
+      if (pointers.size > 1) { down = null; return; } // pinch / two-finger gesture
+      down = { x: e.clientX, y: e.clientY, t: performance.now(), type: e.pointerType };
+      if (e.pointerType !== 'mouse') {
+        pressTimer = window.setTimeout(() => {
+          if (!down || pointers.size !== 1) return;
+          longPressed = true;
+          navigator.vibrate?.(12);
+          this.toggleZoom(ndcAt(down.x, down.y));
+        }, 450);
+      }
+    };
     const pu = (e: PointerEvent) => {
-      if (!down || e.button !== 0) { down = null; return; }
+      pointers.delete(e.pointerId);
+      cancelPress();
+      if (!down || e.button !== 0 || longPressed) { down = null; return; }
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+      const type = down.type;
       down = null;
-      if (moved > 8) { this.ev.event?.('camera'); return; }
-      const id = this.view.pick(ndc(e));
-      if (id >= 0) this.click(id);
-      else if (this.selected >= 0) { this.selected = -1; this.view.setSelected(-1); }
+      if (moved > 10) { this.ev.event?.('camera'); return; }
+      this.pickAt(e.clientX, e.clientY, ndcAt(e.clientX, e.clientY), type !== 'mouse');
     };
     const pm = (e: PointerEvent) => {
+      if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 10) cancelPress();
       if (e.pointerType !== 'mouse') return;
       const now = performance.now();
       if (now - lastHover < 45) return;
       lastHover = now;
-      const id = this.view.pick(ndc(e));
+      const id = this.view.pick(ndcAt(e.clientX, e.clientY));
       const ok = id >= 0 && this.board.isSelectable(id);
       this.view.setHover(ok ? id : -1);
       canvas.style.cursor = ok ? 'pointer' : id >= 0 ? 'not-allowed' : 'grab';
     };
+    const pc = (e: PointerEvent) => { pointers.delete(e.pointerId); cancelPress(); down = null; };
     canvas.addEventListener('pointerdown', pd);
     canvas.addEventListener('pointerup', pu);
     canvas.addEventListener('pointermove', pm);
+    canvas.addEventListener('pointercancel', pc);
     this.disposers.push(() => {
       canvas.removeEventListener('pointerdown', pd);
       canvas.removeEventListener('pointerup', pu);
       canvas.removeEventListener('pointermove', pm);
+      canvas.removeEventListener('pointercancel', pc);
+      cancelPress();
       canvas.style.cursor = '';
     });
+  }
+
+  /**
+   * Resolves a tap to a tile. On touch, a tap that misses or lands on a blocked
+   * tile snaps to the nearest selectable tile within a finger-sized radius.
+   */
+  private pickAt(px: number, py: number, ndc: THREE.Vector2, touch: boolean) {
+    let id = this.view.pick(ndc);
+    if (touch && this.touchAssist && (id < 0 || !this.board.isSelectable(id))) {
+      const candidates = this.board.tiles.filter(t => this.board.isSelectable(t.id)).map(t => t.id);
+      const snapped = this.view.nearestOnScreen(px, py, candidates, 34);
+      if (snapped >= 0) id = snapped;
+    }
+    if (id >= 0) this.click(id);
+    else if (this.selected >= 0) { this.selected = -1; this.view.setSelected(-1); }
+  }
+
+  /** Press-and-hold: zoom into that spot of the board, or back out if already zoomed. */
+  toggleZoom(ndc: THREE.Vector2) {
+    if (!this.running || this.paused) return;
+    if (this.zoomed) { this.resetZoom(); return; }
+    const p = this.view.boardPoint(ndc);
+    if (!p) return;
+    const cam = this.stage.camera, target = this.stage.controls.target;
+    const dir = cam.position.clone().sub(target).normalize();
+    const dist = Math.max(6, cam.position.distanceTo(target) * 0.45);
+    this.zoomed = true;
+    this.stage.flyTo(p.clone().add(dir.multiplyScalar(dist)), p, 0.55);
+    this.ev.event?.('zoom');
+  }
+
+  resetZoom() {
+    this.zoomed = false;
+    const f = this.view.framing();
+    this.stage.flyTo(f.pos, f.target, 0.6);
   }
 
   click(id: number) {
@@ -186,6 +250,7 @@ export class Game {
     at.y += 2.4;
     if (entry.gold) { pts += 60; this.goldLeft--; this.counters.goldCollected++; audio.play('gold'); this.ev.popup('GOLD +60', at.clone().add(new THREE.Vector3(0, 0.6, 0)), '#ffd76a'); }
     if (entry.bombPair) { pts += 40; this.counters.bombsDefused++; this.ev.toast('Bomb defused!', 'good'); }
+    else if (ta.bomb || tb.bomb) this.ev.toast('Its twin bomb is still ticking — pair it before the fuse runs out!', 'warn');
     this.score += pts;
     this.ev.popup(this.combo > 1 ? `+${pts}  ×${this.combo}` : `+${pts}`, at, this.combo > 2 ? '#ffcc44' : '#ffffff');
     audio.play('match', this.combo);
@@ -212,7 +277,7 @@ export class Game {
       audio.play('boom');
       this.stage.doShake(0.6);
       this.stage.flash('#ff4a1a', 0.5, 0.8);
-      this.finish(false, 'A bomb went off!');
+      this.finish(false, 'A bomb went off!', 'bomb');
       return;
     }
     this.checkEnd();
@@ -242,21 +307,24 @@ export class Game {
 
   private checkEnd() {
     const remaining = this.board.remaining();
-    if (remaining === 0) return this.finish(true, 'Board cleared!');
-    if (this.spec.objective === 'gold' && this.goldTotal > 0 && this.goldLeft <= 0) return this.finish(true, 'Every golden pair collected!');
+    if (remaining === 0) return this.finish(true, 'Board cleared!', 'cleared');
+    if (this.spec.objective === 'gold' && this.goldTotal > 0 && this.goldLeft <= 0) return this.finish(true, 'Every golden pair collected!', 'gold');
     this.checkStuck();
   }
 
+  private shufflePending = false;
+
   private checkStuck() {
-    if (this.ended) return;
+    if (this.ended || this.shufflePending) return;
     if (this.board.availableMatches().length > 0) return;
     // Locked tiles might be the only ones free: if there are none free at all it's a true dead end.
     if (this.shufflesLeft !== 0) {
       this.ev.toast('No moves left — the winds reshuffle the tiles', 'warn');
       this.stuckShuffle = true;
-      setTimeout(() => this.shuffle(true), 700);
+      this.shufflePending = true;
+      setTimeout(() => { this.shufflePending = false; this.shuffle(true); }, 700);
     } else {
-      this.finish(false, 'No moves left');
+      this.finish(false, 'No moves left', 'stuck');
     }
   }
 
@@ -332,7 +400,7 @@ export class Game {
     if (this.spec.timeLimit && this.elapsed >= this.spec.timeLimit) {
       this.elapsed = this.spec.timeLimit;
       this.stage.flash('#ffffff', 0.4, 0.6);
-      this.finish(false, 'The sand clock ran out');
+      this.finish(false, 'The sand clock ran out', 'clock');
       return;
     }
     this.hudTimer -= dt;
@@ -352,7 +420,7 @@ export class Game {
     });
   }
 
-  private finish(won: boolean, reason: string) {
+  private finish(won: boolean, reason: string, cause: EndCause) {
     if (this.ended) return;
     this.ended = true;
     this.running = false;
@@ -382,7 +450,7 @@ export class Game {
       winds: [...this.winds], dragonStreak: this.bestDragonStreak, flower: this.flower, season: this.season, tiles: this.board.tiles.length,
     };
     this.pushHud();
-    setTimeout(() => this.ev.end({ won, reason, stars, score: this.score, time: this.elapsed, result, starReasons }), won ? 1600 : 1100);
+    setTimeout(() => this.ev.end({ won, reason, cause, stars, score: this.score, time: this.elapsed, result, starReasons }), won ? 1600 : 1100);
   }
 
   private scheduleAutosave() { this.autosaveTimer = 0.6; }

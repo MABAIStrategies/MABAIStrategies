@@ -8,11 +8,11 @@ import { BIOMES } from './biomes';
 import { LAYOUTS, LAYOUT_BY_ID } from './layouts';
 import {
   campaignLevel, quickLevel, tutorialLevel, objectiveText, fmtTime, TIERS, TierId,
-  CAMPAIGN_COUNT, LEVELS_PER_WORLD, CAMPAIGN_WORLDS, LevelSpec,
+  CAMPAIGN_COUNT, LEVELS_PER_WORLD, CAMPAIGN_WORLDS, LevelSpec, withBlessing, BLESSING_TEXT,
 } from './levels';
 import { CHAPTERS, CAST, storyLevel, fillName, Line } from './story';
 import {
-  Profile, loadProfile, saveProfile, saveSnapshot, loadSnapshot, clearSnapshot, Snapshot, Slot, SLOTS,
+  Profile, LevelStat, loadProfile, saveProfile, saveSnapshot, loadSnapshot, clearSnapshot, Snapshot, Slot, SLOTS,
   exportAll, importAll, resetAll,
 } from './save';
 import { ACHIEVEMENTS, BADGES, evaluate, Achievement, Badge } from './achievements';
@@ -61,10 +61,13 @@ export class App {
     this.atlas = new FaceAtlas(s.labels, this.stage.renderer.capabilities.getMaxAnisotropy());
     this.view = new BoardView(this.stage, this.atlas);
     this.view.dimBlocked = s.dimBlocked;
+    this.view.portraitTurn = s.portraitTurn;
+    this.view.safeInsets = () => this.hudInsets();
     audio.volume = s.volume; audio.sfxOn = s.sfx; audio.musicOn = s.music;
     this.stage.setBiome(this.profile.lastBiome ?? 0, true);
     this.stage.setCinematic(true);
     this.stage.onFrame.push(dt => this.game?.tick(dt));
+    this.watchScreenShape();
     this.bindGlobal();
     this.exportBtn.addEventListener('click', () => this.exportCode());
   }
@@ -307,10 +310,59 @@ export class App {
         </div>
         <div class="kit">Hints <b>${spec.hints < 0 ? '∞' : spec.hints}</b> · Shuffles <b>${spec.shuffles < 0 ? '∞' : spec.shuffles}</b> · Undo <b>${spec.undos < 0 ? '∞' : spec.undos}</b></div>
         ${best ? `<div class="best">Best: ${best.score.toLocaleString()} pts · ${fmtTime(best.time)}</div>` : ''}
+        ${this.recordLine(spec)}
+        ${this.blessingBox(spec)}
       </div>
       <div class="modal-actions"><button class="btn ghost" data-x>Back</button><button class="btn primary" data-go>Play</button></div>`, 'lvl');
     this.on('[data-x]', () => this.closeModal(), m);
-    this.on('[data-go]', () => { this.closeModal(); this.play(spec); }, m);
+    this.on('[data-go]', () => { this.closeModal(); this.play(this.blessed(m) ? withBlessing(spec) : spec); }, m);
+  }
+
+  // ======================= telemetry & blessing =======================
+  /** Stats key: one per level (quick play groups by board + tier, ignoring the random seed). */
+  private statKey(spec: LevelSpec) { return spec.mode === 'quick' ? `q-${spec.layout}-${spec.tier}` : spec.key; }
+
+  private levelStat(spec: LevelSpec): LevelStat {
+    const k = this.statKey(spec);
+    return (this.profile.levelStats[k] ??= { attempts: 0, wins: 0, losses: {}, failStreak: 0, bestTime: 0, totalTime: 0, assistedWins: 0, lastPlayed: 0 });
+  }
+
+  private recordLine(spec: LevelSpec): string {
+    const st = this.profile.levelStats[this.statKey(spec)];
+    if (!st || !st.attempts) return '';
+    const causes: Record<string, string> = { bomb: 'bomb', clock: 'clock', stuck: 'no moves' };
+    const losses = Object.entries(st.losses).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${causes[k] ?? k} ×${v}`).join(', ');
+    return `<div class="record">Your record: ${st.attempts} attempt${st.attempts > 1 ? 's' : ''} · ${st.wins} win${st.wins === 1 ? '' : 's'}${losses ? ` · lost to ${losses}` : ''}</div>`;
+  }
+
+  private blessingBox(spec: LevelSpec): string {
+    const st = this.profile.levelStats[this.statKey(spec)];
+    if (!st || st.failStreak < 3 || spec.mode === 'tutorial') return '';
+    return `<label class="blessing"><input type="checkbox" checked data-bless><span>${this.medallion('燈', '#ff9a3a', false, 'sm')}</span>
+      <span><b>Accept the Lantern\u2019s Blessing</b><small>This level has beaten you ${st.failStreak} times in a row. For your next try: ${BLESSING_TEXT}.</small></span></label>`;
+  }
+
+  private blessed(root: ParentNode): boolean {
+    return !!root.querySelector<HTMLInputElement>('[data-bless]')?.checked;
+  }
+
+  /** The level as designed, without any blessing applied. */
+  private baseSpec(spec: LevelSpec, story?: { ch: number; board: number }): LevelSpec {
+    if (spec.mode === 'campaign' && spec.number) return campaignLevel(spec.number);
+    if (spec.mode === 'story' && story) return storyLevel(story.ch, story.board);
+    return { ...spec, assisted: false, ...(spec.mode === 'quick' ? quickLevel(spec.layout, spec.tier!, spec.biome, spec.seed) : {}) };
+  }
+
+  private async copyBalanceData() {
+    const data = JSON.stringify({ game: 'jade-horizon', kind: 'balance-data', at: new Date().toISOString(), levelStats: this.profile.levelStats,
+      stats: { gamesPlayed: this.profile.stats.gamesPlayed, boardsCleared: this.profile.stats.boardsCleared, playSeconds: this.profile.stats.playSeconds } });
+    try { await navigator.clipboard.writeText(data); this.toast('Balance data copied — paste it to share', 'good'); }
+    catch {
+      const m = this.modal(`<h2>Balance data</h2><p class="muted small">Copy this text and share it.</p><textarea id="balanceData" class="data-box" readonly>${esc(data)}</textarea>
+        <div class="modal-actions"><button class="btn primary" data-x>Done</button></div>`);
+      const ta = m.querySelector<HTMLTextAreaElement>('#balanceData')!; ta.focus(); ta.select();
+      this.on('[data-x]', () => this.closeModal(), m);
+    }
   }
 
   private layoutSvg(pos: Pos[]): string {
@@ -510,7 +562,7 @@ export class App {
       <div><span class="gi mist">?</span><b>Mist</b> hides the face of blocked tiles until they are free.</div>
       <div><span class="gi gold"></span><b>Gold pairs</b> score big — some levels ask you to collect them all.</div>
       <div><span class="gi lock">${ICON.lock}</span><b>Chains</b> show how many matches until a tile unlocks.</div>
-      <div><span class="gi bomb">9</span><b>Bombs</b> tick down each match. Pair them before zero!</div>
+      <div><span class="gi bomb">9</span><b>Bombs</b> tick down each match. Pair the two bombs with each other before zero!</div>
       <div><span class="gi clock">⧗</span><b>Sand clock</b> levels must be won before time runs out.</div></div>` : '';
     el.innerHTML = `<div class="coach-card">${this.medallion('文', '#c0392b', false, 'sm')}<div><div class="coach-step">Lesson ${this.tutStep + 1} / ${TUTORIAL_STEPS.length}</div><h4>${step.title}</h4><p>${step.text}</p>${glossary}
       <div class="coach-actions">${step.next ? `<button class="btn primary sm" data-next>${step.wait ? 'Skip step' : 'Next'}</button>` : ''}<button class="link" data-endtut>End tutorial</button></div></div></div>`;
@@ -540,6 +592,12 @@ export class App {
     this.ui.classList.add('hidden');
     this.exportBtn.classList.add('hidden');
     if (!this.profile.stats.layoutsPlayed.includes(spec.layout)) this.profile.stats.layoutsPlayed.push(spec.layout);
+    if (!opts.snapshot && spec.mode !== 'tutorial') {
+      const st = this.levelStat(spec);
+      st.attempts++; st.lastPlayed = Date.now();
+      this.saveProfile();
+      if (spec.assisted) this.toast(`<b>Lantern\u2019s Blessing:</b> ${BLESSING_TEXT}`, 'good', '燈');
+    }
     this.lastCounters = { mistRevealed: 0, goldCollected: 0, bombsDefused: 0, locksBroken: 0, matches: 0 };
     const game = new Game(this.stage, this.view, spec, {
       hud: s => this.updateHud(s),
@@ -555,7 +613,12 @@ export class App {
     if (spec.mode === 'story') this.stage.saturation = 0.06;
     this.showHud(spec);
     if (opts.snapshot) this.lastCounters = { ...game.counters };
+    game.touchAssist = this.profile.settings.touchAssist;
     await game.start(!this.profile.settings.reducedMotion);
+    this.portraitTip();
+    if (window.matchMedia('(pointer: coarse)').matches && spec.mode !== 'tutorial') {
+      this.tipOnce('zoom', 'Tip: <b>press and hold</b> the board to zoom in. Hold again or tap <b>View</b> to zoom out.', '看');
+    }
     if (spec.mode === 'tutorial') this.renderCoach();
     else if (!opts.snapshot && spec.mode === 'campaign' && spec.number && [11, 21, 31, 41, 51].includes(spec.number)) {
       const intro = ['', 'Mist veils the faces of blocked tiles in this realm.', 'Golden pairs appear — some levels are won by collecting them all.',
@@ -574,9 +637,55 @@ export class App {
   }
 
   private recenter() {
-    if (!this.game) return;
-    const f = this.view.framing();
-    this.stage.flyTo(f.pos, f.target, 0.9);
+    this.game?.resetZoom();
+  }
+
+  /** Space the HUD occupies, so the camera keeps the board clear of it. */
+  private hudInsets() {
+    const H = window.innerHeight;
+    let top = 12, bottom = 12;
+    this.hud.querySelectorAll('.hud-l, .hud-c, .hud-r').forEach(el => {
+      const r = el.getBoundingClientRect();
+      if (r.height) top = Math.max(top, r.bottom + 8);
+    });
+    for (const el of [this.hud.querySelector('.toolbar'), document.getElementById('coach')]) {
+      const r = el?.getBoundingClientRect();
+      if (r && r.height) bottom = Math.max(bottom, H - r.top + 8);
+    }
+    return { top, bottom, left: 10, right: 10 };
+  }
+
+  /** Rotating a phone re-lays wide boards and reframes; small height changes (browser bars) are ignored. */
+  private watchScreenShape() {
+    let lastAspect = window.innerWidth / window.innerHeight;
+    let timer = 0;
+    window.addEventListener('resize', () => {
+      clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const g = this.game;
+        const aspect = window.innerWidth / window.innerHeight;
+        if (!g || !g.running) { lastAspect = aspect; return; }
+        const turn = this.view.wantTransposed(g.board.tiles);
+        const shapeChanged = Math.abs(aspect - lastAspect) / lastAspect > 0.15;
+        lastAspect = aspect;
+        if (turn !== this.view.transposed) {
+          this.view.transposed = turn;
+          this.view.relayout(g.board.tiles).then(() => g.resetZoom());
+          this.portraitTip();
+        } else if (shapeChanged) g.resetZoom();
+      }, 300);
+    });
+  }
+
+  private tipOnce(id: string, html: string, glyph: string) {
+    if (this.profile.seenTips.includes(id)) return;
+    this.profile.seenTips.push(id);
+    this.saveProfile();
+    setTimeout(() => this.toast(html, 'info', glyph), 900);
+  }
+
+  private portraitTip() {
+    if (this.view.transposed) this.tipOnce('portrait', '<b>Board turned to fit your screen.</b> A tile is free when its <b>top or bottom</b> side is open (dimmed tiles are blocked).', '轉');
   }
 
   quitGame(toMenu = true) {
@@ -646,6 +755,15 @@ export class App {
       if (!b || e.time < b.time) { this.profile.quick.best[k] = { score: e.score, time: Math.round(e.time) }; newBest = !!b; }
     }
     if (spec.mode === 'tutorial' && e.won) { this.profile.tutorialDone = true; this.tutStep = -1; this.renderCoach(); }
+    if (spec.mode !== 'tutorial') {
+      const st = this.levelStat(spec);
+      st.totalTime += Math.round(e.time);
+      if (e.won) {
+        st.wins++; st.failStreak = 0;
+        if (spec.assisted) st.assistedWins++;
+        if (!st.bestTime || e.time < st.bestTime) st.bestTime = Math.round(e.time);
+      } else { st.failStreak++; st.losses[e.cause] = (st.losses[e.cause] ?? 0) + 1; }
+    }
     clearSnapshot('auto');
     const unlocked = this.afterProgress(e.result);
     this.results(g, e, newBest, unlocked.achievements.length + unlocked.badges.length);
@@ -672,6 +790,8 @@ export class App {
           <div><small>Tiles</small><b>${g.board.tiles.length - g.board.remaining()}/${g.board.tiles.length}</b></div>
         </div>
         ${unlockedCount ? `<p class="unl">${unlockedCount} new unlock${unlockedCount > 1 ? 's' : ''} — see Achievements</p>` : ''}
+        ${spec.assisted ? '<p class="muted small">Played with the Lantern\u2019s Blessing.</p>' : ''}
+        ${!e.won ? this.blessingBox(spec) : ''}
       </div>
       <div class="modal-actions">
         ${isStory && e.won ? '<button class="btn primary" data-a="story-next">Continue the story</button>' : ''}
@@ -683,13 +803,15 @@ export class App {
     if (showStars && e.won) e.starReasons.forEach((on, k) => on && setTimeout(() => audio.play('star', k * 2), 300 + k * 450));
     this.on('[data-a]', el => {
       const a = el.dataset.a!;
+      const bless = this.blessed(m);
       this.closeModal();
       if (a === 'next') { this.quitGame(false); this.levelIntroAfterMap(next); }
       if (a === 'retry') {
         this.profile.stats.retries[spec.key] = (this.profile.stats.retries[spec.key] ?? 0) + 1;
         this.afterProgress();
         if (spec.mode === 'tutorial') this.tutStep = 0;
-        this.play(spec, { story: g.story });
+        const base = this.baseSpec(spec, g.story);
+        this.play(bless ? withBlessing(base) : base, { story: g.story });
       }
       if (a === 'again') this.play(quickLevel(spec.layout, spec.tier!, spec.biome, Math.floor(Math.random() * 1e9)));
       if (a === 'story-next' && g.story) this.storyBoardWon(g.story.ch, g.story.board);
@@ -784,8 +906,26 @@ export class App {
         return `<div class="badge ${on ? 'on' : ''}" title="${esc(b.desc)}">${this.medallion(b.glyph, on ? b.color : '#555', !on)}<b>${b.name}</b><small>${b.desc}</small></div>`;
       }).join('')}</div>
       <h4 class="sec">Statistics</h4>
-      <div class="stats">${rows.map(([k, v]) => `<div><small>${k}</small><b>${v}</b></div>`).join('')}</div>`, 'profile');
+      <div class="stats">${rows.map(([k, v]) => `<div><small>${k}</small><b>${v}</b></div>`).join('')}</div>
+      <h4 class="sec">Toughest levels</h4>
+      ${this.toughestTable()}
+      <div class="center-row"><button class="btn" data-copy-balance>Copy balance data</button>
+        <span class="muted small">Your per-level wins, losses and times, as text you can share to help tune difficulty. Nothing leaves your device unless you paste it somewhere.</span></div>`, 'profile');
     this.bindBack();
+    this.on('[data-copy-balance]', () => this.copyBalanceData());
+  }
+
+  private toughestTable(): string {
+    const rows = Object.entries(this.profile.levelStats)
+      .map(([k, st]) => ({ k, st, lost: Object.values(st.losses).reduce((a, b) => a + b, 0) }))
+      .filter(r => r.lost > 0).sort((a, b) => b.lost - a.lost || a.st.wins - b.st.wins).slice(0, 6);
+    if (!rows.length) return '<p class="muted tough-empty">No losses yet. Levels that beat you will show up here.</p>';
+    const label = (k: string) => k.startsWith('c') ? `Level ${k.slice(1)} · ${campaignLevel(Number(k.slice(1))).name}` : k.startsWith('s') ? `Story ${k.slice(1)}` : k.startsWith('q-') ? `Quick · ${k.slice(2).replace('-', ' · ')}` : k;
+    const causes: Record<string, string> = { bomb: 'bombs', clock: 'the clock', stuck: 'no moves' };
+    return `<div class="tough">${rows.map(r => {
+      const worst = Object.entries(r.st.losses).sort((a, b) => b[1] - a[1])[0];
+      return `<div><b>${esc(label(r.k))}</b><span>${r.st.wins}/${r.st.attempts} won · mostly lost to ${causes[worst[0]] ?? worst[0]}</span></div>`;
+    }).join('')}</div>`;
   }
 
   // ======================= SETTINGS =======================
@@ -800,6 +940,8 @@ export class App {
         <label class="tog"><input type="checkbox" ${s.dimBlocked ? 'checked' : ''} data-k="dimBlocked"> Dim blocked tiles</label>
         <label class="tog"><input type="checkbox" ${s.showMoves ? 'checked' : ''} data-k="showMoves"> Show available moves count</label>
         <label class="tog"><input type="checkbox" ${s.reducedMotion ? 'checked' : ''} data-k="reducedMotion"> Reduced motion</label>
+        <label class="tog"><input type="checkbox" ${s.touchAssist ? 'checked' : ''} data-k="touchAssist"> Touch assist: snap taps to the nearest free tile</label>
+        <label class="tog"><input type="checkbox" ${s.portraitTurn ? 'checked' : ''} data-k="portraitTurn"> Turn wide boards to fit a portrait screen</label>
         <label>Graphics <select data-k="quality"><option value="high" ${s.quality === 'high' ? 'selected' : ''}>High (shadows, bloom, color grading)</option><option value="low" ${s.quality === 'low' ? 'selected' : ''}>Performance</option></select></label>
       </div>
       ${fromPause ? '' : `<h4 class="sec">Save data</h4><div class="row-btns">
@@ -845,6 +987,15 @@ export class App {
       if (this.game) { const g = this.game; this.view.build(g.board.tiles, false); this.refreshBoard(); }
     }
     if (k === 'showMoves') this.hud.classList.toggle('no-moves', !st.showMoves);
+    if (k === 'touchAssist' && this.game) this.game.touchAssist = st.touchAssist;
+    if (k === 'portraitTurn') {
+      this.view.portraitTurn = st.portraitTurn;
+      const g = this.game;
+      if (g) {
+        const turn = this.view.wantTransposed(g.board.tiles);
+        if (turn !== this.view.transposed) { this.view.transposed = turn; this.view.relayout(g.board.tiles).then(() => g.resetZoom()); }
+      }
+    }
   }
 
   private refreshBoard() {

@@ -95,8 +95,60 @@ export class BoardView {
     stage.onFrame.push(dt => this.update(dt));
   }
 
+  /** Portrait phones: wide boards are laid out turned 90°, tiles kept upright. */
+  transposed = false;
+  portraitTurn = true;
+  /** Screen-space margins the board must stay clear of (HUD bars), in CSS px. */
+  safeInsets: () => { top: number; bottom: number; left: number; right: number } = () => ({ top: 90, bottom: 100, left: 12, right: 12 });
+
+  /** Board-plane position before centering. Logical rows/columns swap when transposed. */
+  private rawXZ(p: Pos, transposed = this.transposed): [number, number] {
+    return transposed ? [-p.y * TW / 2, p.x * TD / 2] : [p.x * TW / 2, p.y * TD / 2];
+  }
+
   worldPos(p: Pos): THREE.Vector3 {
-    return new THREE.Vector3(p.x * TW / 2, DAIS_TOP + TH / 2 + p.z * TH, p.y * TD / 2).sub(this.center);
+    const [x, z] = this.rawXZ(p);
+    return new THREE.Vector3(x, DAIS_TOP + TH / 2 + p.z * TH, z).sub(this.center);
+  }
+
+  private bounds(tiles: TileData[], transposed: boolean) {
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const t of tiles) {
+      const [x, z] = this.rawXZ(t.pos, transposed);
+      minX = Math.min(minX, x - TW / 2); maxX = Math.max(maxX, x + TW / 2);
+      minZ = Math.min(minZ, z - TD / 2); maxZ = Math.max(maxZ, z + TD / 2);
+    }
+    return { minX, maxX, minZ, maxZ }; // outer edges of the tile meshes
+  }
+
+  /** Whether this board should be turned for the current screen shape. */
+  wantTransposed(tiles: TileData[]): boolean {
+    if (!this.portraitTurn || this.stage.camera.aspect >= 0.8) return false;
+    const b = this.bounds(tiles, false);
+    return (b.maxX - b.minX) > (b.maxZ - b.minZ) * 1.15;
+  }
+
+  private measure(tiles: TileData[]) {
+    const b = this.bounds(tiles, this.transposed);
+    this.center.set((b.minX + b.maxX) / 2, 0, (b.minZ + b.maxZ) / 2);
+    this.extent = { w: b.maxX - b.minX, d: b.maxZ - b.minZ, h: Math.max(...tiles.map(t => t.pos.z)) + 1 };
+  }
+
+  /** Re-lay the existing board (e.g. after the phone is rotated). */
+  relayout(tiles: TileData[]): Promise<void> {
+    this.measure(tiles);
+    const ps: Promise<void>[] = [];
+    for (const t of tiles) {
+      const m = this.meshes.get(t.id); if (!m) continue;
+      const from = m.root.position.clone();
+      m.base = this.worldPos(t.pos);
+      if (m.hidden) { m.root.position.copy(m.base); continue; }
+      m.busy = true;
+      const to = m.base.clone();
+      ps.push(this.stage.tweens.add(0.6, k => { m.root.position.lerpVectors(from, to, k); m.root.position.y += Math.sin(k * Math.PI) * 1.2; },
+        { ease: ease.inOutCubic, delay: Math.random() * 0.15, tag: 'tile' + t.id }).then(() => { m.busy = false; m.root.position.copy(m.base); }));
+    }
+    return Promise.all(ps).then(() => undefined);
   }
 
   clear() {
@@ -112,10 +164,8 @@ export class BoardView {
 
   build(tiles: TileData[], animate = true): Promise<void> {
     this.clear();
-    const xs = tiles.map(t => t.pos.x), ys = tiles.map(t => t.pos.y);
-    const minX = Math.min(...xs), maxX = Math.max(...xs) + 2, minY = Math.min(...ys), maxY = Math.max(...ys) + 2;
-    this.center.set(((minX + maxX) / 2) * TW / 2, 0, ((minY + maxY) / 2) * TD / 2);
-    this.extent = { w: (maxX - minX) * TW / 2, d: (maxY - minY) * TD / 2, h: Math.max(...tiles.map(t => t.pos.z)) + 1 };
+    this.transposed = this.wantTransposed(tiles);
+    this.measure(tiles);
     const order = [...tiles].sort((a, b) => a.pos.z - b.pos.z || a.pos.y - b.pos.y || a.pos.x - b.pos.x);
     const promises: Promise<void>[] = [];
     order.forEach((t, i) => {
@@ -318,17 +368,77 @@ export class BoardView {
   }
 
   /** Camera position that frames the current board. */
+  /**
+   * Places the camera so the whole board fits between the HUD bars: projects the
+   * board's bounding box and searches for the closest distance (and a small
+   * forward/back target shift) that keeps every corner inside the safe area.
+   */
   framing(): { pos: THREE.Vector3; target: THREE.Vector3 } {
     const cam = this.stage.camera;
-    const vfov = THREE.MathUtils.degToRad(cam.fov);
-    const hfov = 2 * Math.atan(Math.tan(vfov / 2) * cam.aspect);
-    const w = this.extent.w + 1.2, d = this.extent.d + 1.6;
-    const distW = (w / 2) / Math.tan(hfov / 2) * 1.3;   // margin for near-row perspective
-    const distD = (d / 2) / Math.tan(vfov / 2) * 1.45;  // room for HUD bars
-    const dist = Math.max(distW, distD, 12);
-    const pitch = cam.aspect < 0.8 ? 1.12 : 0.96;       // steeper, more top-down on portrait phones
-    const target = new THREE.Vector3(0, DAIS_TOP + 0.4, cam.aspect < 0.8 ? 0.2 : 0.5);
-    return { pos: new THREE.Vector3(0, target.y + dist * Math.sin(pitch), target.z + dist * Math.cos(pitch)), target };
+    const W = Math.max(1, window.innerWidth), H = Math.max(1, window.innerHeight);
+    const ins = this.safeInsets();
+    const safe = { x0: -1 + 2 * ins.left / W, x1: 1 - 2 * ins.right / W, y0: -1 + 2 * ins.bottom / H, y1: 1 - 2 * ins.top / H };
+    // Measured on a 390×664 phone: turned boards read best at a lower angle, square ones from higher up.
+    const pitch = cam.aspect < 0.8 ? (this.transposed ? 0.95 : 1.3) : 0.96;
+    const hw = this.extent.w / 2 + 0.3, hd = this.extent.d / 2 + 0.3;
+    const yTop = DAIS_TOP + this.extent.h * TH + 0.3;
+    const corners: THREE.Vector3[] = [];
+    for (const x of [-hw, hw]) for (const z of [-hd, hd]) for (const y of [DAIS_TOP, yTop]) corners.push(new THREE.Vector3(x, y, z));
+    const probe = cam.clone();
+    const v = new THREE.Vector3();
+    const place = (dist: number, tz: number) => {
+      const target = new THREE.Vector3(0, DAIS_TOP + 0.4, tz);
+      probe.position.set(0, target.y + dist * Math.sin(pitch), target.z + dist * Math.cos(pitch));
+      probe.lookAt(target);
+      probe.updateMatrixWorld();
+      return target;
+    };
+    const fits = () => corners.every(c => {
+      v.copy(c).project(probe);
+      return v.z < 1 && v.x >= safe.x0 && v.x <= safe.x1 && v.y >= safe.y0 && v.y <= safe.y1;
+    });
+    let best = { dist: 80, tz: 0 };
+    for (let tz = -3; tz <= 3.001; tz += 0.5) {
+      let lo = 4, hi = 90;
+      place(hi, tz);
+      if (!fits()) continue;
+      for (let k = 0; k < 22; k++) { const mid = (lo + hi) / 2; place(mid, tz); if (fits()) hi = mid; else lo = mid; }
+      if (hi < best.dist) best = { dist: hi, tz };
+    }
+    const dist = Math.max(best.dist, 9);
+    const target = place(dist, best.tz);
+    return { pos: probe.position.clone(), target };
+  }
+
+  /** On-screen width of one tile in CSS px (diagnostics and tests). */
+  tileScreenWidth(): number {
+    const cam = this.stage.camera;
+    const a = new THREE.Vector3(-TW / 2, DAIS_TOP + TH, 0).project(cam), b = new THREE.Vector3(TW / 2, DAIS_TOP + TH, 0).project(cam);
+    return Math.abs(b.x - a.x) / 2 * window.innerWidth;
+  }
+
+  /** Nearest tile (by its top-face center on screen) among `ids`, within `radius` CSS px. */
+  nearestOnScreen(px: number, py: number, ids: number[], radius: number): number {
+    const cam = this.stage.camera;
+    const v = new THREE.Vector3();
+    let bestId = -1, bestD = radius;
+    for (const id of ids) {
+      const m = this.meshes.get(id);
+      if (!m || m.hidden) continue;
+      v.copy(m.base); v.y += TH / 2;
+      v.project(cam);
+      const d = Math.hypot((v.x + 1) / 2 * window.innerWidth - px, (1 - v.y) / 2 * window.innerHeight - py);
+      if (d < bestD) { bestD = d; bestId = id; }
+    }
+    return bestId;
+  }
+
+  /** Point on the board plane under the given NDC coordinate. */
+  boardPoint(ndc: THREE.Vector2): THREE.Vector3 | null {
+    this.raycaster.setFromCamera(ndc, this.stage.camera);
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(DAIS_TOP + TH));
+    const out = new THREE.Vector3();
+    return this.raycaster.ray.intersectPlane(plane, out);
   }
 
   private update(dt: number) {

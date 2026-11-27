@@ -73,3 +73,34 @@ describe('content', () => {
     }
   });
 });
+
+describe('difficulty curve (simulated players)', () => {
+  it('has no unwinnable wall: a skilled player beats every campaign level sometimes', async () => {
+    const { campaignLevel, CAMPAIGN_COUNT } = await import('../src/levels');
+    const { simulate } = await import('../src/sim');
+    const walls: number[] = [];
+    for (let n = 1; n <= CAMPAIGN_COUNT; n++) {
+      let wins = 0;
+      for (let r = 0; r < 6; r++) if (simulate(campaignLevel(n), 'skilled', mulberry32(n * 31 + r)).outcome === 'won') wins++;
+      if (wins === 0) walls.push(n);
+    }
+    expect(walls).toEqual([]);
+  }, 120000);
+
+  it('places bombs only on pairs reachable within a few moves', async () => {
+    const { campaignLevel, CAMPAIGN_COUNT } = await import('../src/levels');
+    const { freeSteps } = await import('../src/engine');
+    const { LAYOUT_BY_ID } = await import('../src/layouts');
+    for (let n = 1; n <= CAMPAIGN_COUNT; n++) {
+      const s = campaignLevel(n);
+      if (!s.bombs) continue;
+      const pos = LAYOUT_BY_ID[s.layout].positions;
+      const d = deal(pos, s, mulberry32(s.seed));
+      const steps = freeSteps(pos, d.order);
+      for (const t of d.tiles.filter(t => t.bomb)) {
+        expect(steps[t.id]).toBeLessThanOrEqual(3);
+        expect(t.lock).toBe(0);
+      }
+    }
+  });
+});

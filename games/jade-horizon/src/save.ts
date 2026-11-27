@@ -6,6 +6,13 @@ import type { LevelSpec } from './levels';
 export interface Settings {
   volume: number; music: boolean; sfx: boolean; quality: 'high' | 'low';
   labels: boolean; dimBlocked: boolean; showMoves: boolean; reducedMotion: boolean;
+  portraitTurn: boolean; touchAssist: boolean;
+}
+
+/** Per-level play record, kept on the device and used to tune difficulty. */
+export interface LevelStat {
+  attempts: number; wins: number; losses: Record<string, number>; failStreak: number;
+  bestTime: number; totalTime: number; assistedWins: number; lastPlayed: number;
 }
 
 export interface Stats {
@@ -27,6 +34,8 @@ export interface Profile {
   settings: Settings;
   quick: { best: Record<string, { score: number; time: number }> };
   lastBiome: number;
+  levelStats: Record<string, LevelStat>;
+  seenTips: string[];
 }
 
 export interface HistoryEntry { a: number; b: number; score: number; combo: number; bombs: [number, number][]; gold: boolean; bombPair: boolean }
@@ -62,9 +71,11 @@ export function defaultProfile(): Profile {
       playSeconds: 0, maxCombo: 0, mistRevealed: 0, goldCollected: 0, bombsDefused: 0, locksBroken: 0,
       layoutsPlayed: [], retries: {}, resumed: 0, zenClears: 0, masterClears: 0, failures: 0,
     },
-    settings: { volume: 0.7, music: true, sfx: true, quality: 'high', labels: true, dimBlocked: true, showMoves: true, reducedMotion: false },
+    settings: { volume: 0.7, music: true, sfx: true, quality: 'high', labels: true, dimBlocked: true, showMoves: true, reducedMotion: false, portraitTurn: true, touchAssist: true },
     quick: { best: {} },
     lastBiome: 0,
+    levelStats: {},
+    seenTips: [],
   };
 }
 

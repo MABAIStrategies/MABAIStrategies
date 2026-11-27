@@ -25,7 +25,21 @@ export interface LevelSpec {
   tier?: TierId;
   number?: number;     // campaign level number
   boss?: boolean;
+  assisted?: boolean;  // Lantern's Blessing applied after repeated losses
 }
+
+/** Extra help offered after three losses in a row on the same level. */
+export function withBlessing(s: LevelSpec): LevelSpec {
+  return {
+    ...s, assisted: true,
+    hints: s.hints < 0 ? s.hints : s.hints + 2,
+    shuffles: s.shuffles < 0 ? s.shuffles : s.shuffles + 1,
+    timeLimit: s.timeLimit ? Math.round(s.timeLimit * 1.25) : 0,
+    bombMoves: s.bombs ? s.bombMoves + 3 : s.bombMoves,
+  };
+}
+
+export const BLESSING_TEXT = '+2 hints, +1 shuffle, 25% more time and longer bomb fuses';
 
 export const CAMPAIGN_WORLDS = 8;
 export const LEVELS_PER_WORLD = 10;
@@ -54,6 +68,10 @@ const LEVEL_NAMES = [
   ['Star Pyramid', 'Void Throne', 'Sky Shell', 'Nebula Lotus', 'Starfall', 'Comet Peaks', 'Celestial Shell', 'Hollow Heavens', 'Last Constellation', 'Horizon of Jade'],
 ];
 
+// Within each realm the difficulty breathes: a gentle opener, a rise, a breather
+// before the climb to the boss. Multiplies pressure (mist, clock tightness).
+const RHYTHM = [0.85, 0.95, 1.0, 1.05, 1.1, 0.9, 1.05, 1.1, 1.0, 1.15];
+
 export function campaignLevel(n: number): LevelSpec {
   const w = Math.floor((n - 1) / LEVELS_PER_WORLD);
   const i = (n - 1) % LEVELS_PER_WORLD;
@@ -61,27 +79,42 @@ export function campaignLevel(n: number): LevelSpec {
   const layout = WORLD_LAYOUTS[w][i];
   const tiles = layoutSize(layout);
   const p = (w * 10 + i) / (CAMPAIGN_COUNT - 1); // 0..1 global progress
+  const r = RHYTHM[i];
   const spec: LevelSpec = {
     key: `c${n}`, mode: 'campaign', number: n, boss,
     name: LEVEL_NAMES[w][i], layout, biome: w, seed: hashString(`campaign-${n}`),
     copies: w === 0 || (w === 1 && i < 5) ? 2 : 4,
-    objective: 'clear', timeLimit: 0,
-    parTime: Math.round(tiles * (3.4 - p * 1.4)),
+    objective: 'clear', timeLimit: 0, parTime: 0,
     mist: 0, locks: 0, gold: 0, bombs: 0, bombMoves: 0,
-    hints: Math.max(0, 5 - w), shuffles: w < 2 ? 3 : w < 5 ? 2 : w < 7 ? 1 : 0, undos: -1,
+    hints: [5, 4, 3, 3, 2, 2, 1, 1][w], shuffles: [3, 3, 2, 2, 2, 1, 1, 1][w], undos: -1,
   };
   // Mechanics unlock realm by realm and stack up.
-  if (w >= 1) spec.mist = Math.min(0.85, 0.15 + i * 0.03 + (w - 1) * 0.1);
+  if (w >= 1) spec.mist = Math.min(0.85, (0.15 + i * 0.03 + (w - 1) * 0.08) * r);
   if (w >= 2 && (i % 3 !== 0 || boss)) { spec.objective = i % 2 === 0 && !boss ? 'clear' : 'gold'; spec.gold = 2 + Math.floor(i / 3) + (w - 2); }
   if (w === 2 && boss) spec.objective = 'clear';
-  if (w >= 3) spec.timeLimit = i % 2 === 1 || boss || w >= 6 ? Math.round(tiles * (4.4 - (w - 3) * 0.35 - i * 0.04)) : 0;
-  if (w >= 4) spec.locks = 2 + Math.floor(i / 2) + (w - 4) * 2;
-  if (w >= 5) { spec.bombs = 1 + Math.floor(i / 4) + (w - 5); spec.bombMoves = Math.max(10, 18 - i - (w - 5) * 2); }
-  if (w >= 6) spec.undos = boss ? 0 : 3;
-  if (boss) { spec.hints = Math.max(0, spec.hints - 1); spec.mist = Math.min(1, spec.mist + 0.1); }
-  if (spec.timeLimit) spec.parTime = Math.min(spec.parTime, Math.round(spec.timeLimit * 0.7));
+  if (w >= 4) spec.locks = 2 + Math.floor(i / 2) + (w - 4);
+  if (w >= 5) { spec.bombs = Math.min(3, 1 + Math.floor(i / 5) + (w - 5)); spec.bombMoves = Math.max(12, 18 - Math.floor(i / 2) - (w - 5)); }
+  if (w >= 6) spec.undos = boss ? 2 : 3;
+  if (boss) { spec.hints = Math.max(1, spec.hints - 1); spec.shuffles += 1; spec.mist = Math.min(0.9, spec.mist + 0.08); }
   if (spec.objective === 'gold') spec.gold = Math.min(spec.gold, Math.floor(tiles / 12));
+  // Time: par and the sand clock come from a model of human solve pace,
+  // tightened gradually through the campaign and by the realm's rhythm.
+  const est = estimateSeconds(spec, tiles);
+  const timed = w >= 3 && (i % 2 === 1 || boss || (w >= 6 && i !== 0 && i !== 5));
+  if (timed) spec.timeLimit = Math.round(est * (1.75 - (w - 3) * 0.11) / r / 5) * 5;
+  spec.parTime = Math.round(est * (1.05 - p * 0.2) / r);
+  if (spec.timeLimit) spec.parTime = Math.min(spec.parTime, Math.round(spec.timeLimit * 0.75));
   return spec;
+}
+
+/**
+ * Modelled human pace: seconds per match grow with board size (more to scan),
+ * mist (less to plan with), four-of-a-kind sets, chains and bombs.
+ */
+export function estimateSeconds(spec: Pick<LevelSpec, 'objective' | 'mist' | 'copies' | 'locks' | 'bombs'>, tiles: number): number {
+  const matches = spec.objective === 'gold' ? Math.ceil(tiles / 2 * 0.8) : tiles / 2;
+  const perMatch = 2.6 + tiles / 80 + spec.mist * 1.6 + (spec.copies === 4 ? 0.6 : 0) + (spec.locks ? 0.3 : 0) + (spec.bombs ? 0.4 : 0);
+  return matches * perMatch;
 }
 
 export type TierId = 'zen' | 'easy' | 'normal' | 'hard' | 'master';
