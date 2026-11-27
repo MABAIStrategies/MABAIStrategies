@@ -1,0 +1,24 @@
+{
+  "name": "jade-horizon",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Jade Horizon \u2014 a 3D Mahjong solitaire odyssey: campaign, story, quick play, tutorial.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "balance": "vite-node scripts/balance.ts"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.170.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vite-plugin-singlefile": "^2.0.3",
+    "vitest": "^2.1.8"
+  }
+}
